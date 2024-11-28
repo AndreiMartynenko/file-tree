@@ -2,46 +2,98 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
-func displayTree(path string, level int) {
-	// your code here
-	files, err := ioutil.ReadDir(path)
+func dirTree(output io.Writer, path string, printFiles bool) error {
+
+	return printDir(output, path, printFiles, "", false)
+}
+
+func printDir(output io.Writer, path string, printFiles bool, prefix string, isLast bool) error {
+	entries, err := os.ReadDir(path)
 	if err != nil {
-		fmt.Println("Error in reading directory", err)
-		return
+		return err
 	}
 
-	// Loop through all files in the directory
-	for _, file := range files {
-		// Print the file name
-		for i := 0; i < level; i++ {
-			fmt.Print("  ")
-		}
-		fmt.Println(file.Name())
+	//Sort records in alphabetical order
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
 
-		// If the file is a directory, call the function recursively
-		if file.IsDir() {
-			newPath := filepath.Join(path, file.Name())
-			displayTree(newPath, level+1)
-			// displayTree(path+"/"+file.Name(), level+1)
+	//Filter out files if printFiles is swithced off
+	if !printFiles {
+		var dirsOnly []os.DirEntry
+		for _, entry := range entries {
+			if entry.IsDir() {
+				dirsOnly = append(dirsOnly, entry)
+			}
 		}
+		entries = dirsOnly
+	}
+	//Iterate over the records in the directory
+	for i, entry := range entries {
+		isLastEntry := i == len(entries)-1
+		printEntry(output, entry, prefix, isLastEntry)
+
+		if entry.IsDir() {
+			//If this is a directory, process it recursively
+			newPrefix := prefix
+			if isLastEntry {
+				newPrefix += "\t"
+			} else {
+				newPrefix += "│\t"
+			}
+			err = printDir(output, filepath.Join(path, entry.Name()), printFiles, newPrefix, isLastEntry)
+			if err != nil {
+				return err
+			}
+		}
+
+	}
+	return nil
+}
+
+// printEntry prints one element (file or folder) of the directory tree
+func printEntry(output io.Writer, entry os.DirEntry, prefix string, isLast bool) {
+	// Select the desired graphical symbol
+	var branch string
+	if isLast {
+		branch += "└───"
+	} else {
+		branch += "├───"
 	}
 
+	name := entry.Name()
+	if entry.IsDir() {
+		fmt.Fprintf(output, "%s%s%s\n", prefix, branch, name)
+	} else {
+		info, err := entry.Info()
+		if err != nil {
+			return
+		}
+		size := "empty"
+		if info.Size() > 0 {
+			size = fmt.Sprintf("%db", info.Size())
+		}
+		fmt.Fprintf(output, "%s%s%s (%s)\n", prefix, branch, name, size)
+	}
 }
 
 func main() {
-	// Getting the directory from the command line argument
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go <directory>")
+		fmt.Println("Usage: go run main.go <path> [-f]")
 		return
 	}
-	rootDir := os.Args[1]
 
-	// Call the function to display the tree
-	fmt.Println("Tree of files for directory", rootDir)
-	displayTree(rootDir, 0)
+	path := os.Args[1]
+	printFiles := len(os.Args) > 2 && os.Args[2] == "-f"
+
+	err := dirTree(os.Stdout, path, printFiles)
+	if err != nil {
+		fmt.Println("Error:", err)
+	}
 }
